@@ -42,6 +42,7 @@ export default function Leases() {
           <tr>
             <th>租约号</th>
             <th>批窗</th>
+            <th>落点快照</th>
             <th>资源</th>
             <th>时段</th>
             <th>状态</th>
@@ -53,6 +54,32 @@ export default function Leases() {
             <tr key={r.lease_no}>
               <td>{r.lease_no}</td>
               <td>{r.window_code}</td>
+              <td>
+                {r.snapshot_id ? (
+                  <>
+                    <span
+                      className={`tag ${
+                        r.source_consistent === false ? "bad" : "live"
+                      }`}
+                      title={
+                        r.source_consistent === false
+                          ? "租约落点与批窗现行钉扎分叉"
+                          : "与批窗快照同源"
+                      }
+                    >
+                      📌 {r.snapshot_id}
+                    </span>
+                    <br />
+                    <small>
+                      v{r.template_version}
+                      {r.source_consistent === false && " · 分叉!"}
+                      {r.source_consistent === null && " · 批窗已删"}
+                    </small>
+                  </>
+                ) : (
+                  <small>手工窗</small>
+                )}
+              </td>
               <td>
                 {r.slot_code} / {r.executor_code}
               </td>

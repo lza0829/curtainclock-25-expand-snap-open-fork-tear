@@ -130,8 +130,8 @@ export default function Templates() {
       const r = await api.expandTemplate(code, weekStart);
       setMsg(
         r.reused
-          ? `${code} 该周已展开过（v${r.template_version}），复用既有 ${r.windows.length} 个草稿，未重复展开`
-          : `已按 v${r.template_version} 展开 ${r.windows.length} 个草稿批窗：${r.windows.join("、")}`
+          ? `${code} 该周已展开过（${r.snapshot_id} · v${r.template_version}），复用既有 ${r.windows.length} 个草稿，未重复展开`
+          : `已按 v${r.template_version} 钉快照 ${r.snapshot_id}，展开 ${r.windows.length} 个草稿批窗：${r.windows.join("、")}`
       );
       await load();
     } catch (e) {
@@ -312,7 +312,7 @@ export default function Templates() {
           <thead>
             <tr>
               <th>展开</th>
-              <th>模板@版本</th>
+              <th>钉扎快照 / 模板@版本</th>
               <th>周</th>
               <th>批窗（快照）</th>
             </tr>
@@ -326,7 +326,17 @@ export default function Templates() {
                   <small>{x.created_at}</small>
                 </td>
                 <td>
-                  {x.template_code} <span className="tag">v{x.template_version}</span>
+                  <span className={`tag ${x.pinning_consistent ? "live" : "bad"}`}>
+                    📌 {x.snapshot_id}
+                  </span>
+                  <br />
+                  {x.template_code} v{x.template_version}
+                  {!x.pinning_consistent && (
+                    <>
+                      <br />
+                      <small className="msg err">钉扎不一致</small>
+                    </>
+                  )}
                 </td>
                 <td>{x.week_start}</td>
                 <td>
@@ -336,7 +346,8 @@ export default function Templates() {
                       {i.status ? (
                         <small>
                           {i.day} {fmtMin(i.start_min)}–{fmtMin(i.end_min)} ·{" "}
-                          {i.slot_code}/{i.executor_code} · {i.status}
+                          {i.slot_code}/{i.executor_code} · {i.status} ·{" "}
+                          {i.snapshot_id || "未钉!"}
                         </small>
                       ) : (
                         <small>（已作废）</small>

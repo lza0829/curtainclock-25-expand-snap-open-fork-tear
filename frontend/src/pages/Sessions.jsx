@@ -79,9 +79,19 @@ export default function Sessions() {
               </td>
               <td>
                 {r.template_code ? (
-                  <span className="tag">
-                    {r.template_code}·v{r.template_version}
-                  </span>
+                  r.snapshot_id ? (
+                    <>
+                      <span className="tag live">
+                        {r.template_code}·v{r.template_version}
+                      </span>
+                      <br />
+                      <small title="开窗/预检/租约唯一真源">📌 {r.snapshot_id}</small>
+                    </>
+                  ) : (
+                    <span className="tag bad" title="模板批窗缺钉扎，开窗将被拒">
+                      {r.template_code}·v{r.template_version} 未钉快照
+                    </span>
+                  )
                 ) : (
                   <small>手工</small>
                 )}

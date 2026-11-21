@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.services import expand_panel
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -20,12 +19,30 @@ class CloseBody(BaseModel):
 
 @router.get("/leases")
 def list_leases():
+    """租约列表。每条租约回带开窗时钉死的 snapshot_id/template_version，
+    并与批窗现行快照行现场比对，给前端同源互证标记（分叉即告警，不静默改写）。"""
     conn = connect()
     try:
         rows = conn.execute(
             "SELECT * FROM leases ORDER BY id DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            item = dict(r)
+            w = conn.execute(
+                "SELECT snapshot_id AS w_snapshot, template_version AS w_version "
+                "FROM windows WHERE code=?",
+                (r["window_code"],),
+            ).fetchone()
+            if w is None:
+                item["source_consistent"] = None  # 批窗已物理删除，仅存审计
+            else:
+                item["source_consistent"] = (
+                    r["snapshot_id"] == w["w_snapshot"]
+                    and r["template_version"] == w["w_version"]
+                )
+            out.append(item)
+        return out
     finally:
         conn.close()
 
@@ -61,14 +78,3 @@ def close_lease(body: CloseBody):
             return lease_svc.close_lease(conn, body.lease_no)
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
-
-
-class ExpandBody(BaseModel):
-    window_code: str
-    snapshot_id: str = "snap-1"
-
-
-@router.post("/templates/expand")
-def expand_template(body: ExpandBody):
-    with transaction() as conn:
-        return expand_panel.paint_expand(conn, body.window_code, body.snapshot_id)

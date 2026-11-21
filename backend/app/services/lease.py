@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.services import expand_panel
 
 import sqlite3
 from datetime import datetime, timezone
@@ -90,11 +89,18 @@ def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
     ):
         raise ValueError("资源刚被占用，开窗失败")
 
+    # 钉死架构铁律：模板来源批窗必须带已钉 snapshot_id；开窗只认批窗快照行，
+    # 禁止旁路读模板头，也禁止无钉扎的模板窗落成租约（手工窗 template_code 为空除外）。
+    if session["template_code"] is not None and not session["snapshot_id"]:
+        raise ValueError("模板批窗缺少已钉快照，拒绝开窗（禁止无钉扎占用）")
+
     n = conn.execute("SELECT COUNT(*) c FROM leases").fetchone()["c"] + 1
     lease_no = f"L-{session['day'].replace('-', '')}-{n:04d}"
+    # 租约落点：槽/执行器/时段与快照身份一并从批窗快照行抄定，参数同源
     conn.execute(
-        "INSERT INTO leases(lease_no, window_code, slot_code, executor_code, day, start_min, end_min, status, opened_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO leases(lease_no, window_code, slot_code, executor_code, day, "
+        "start_min, end_min, status, opened_at, snapshot_id, template_version) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (
             lease_no,
             window_code,
@@ -105,6 +111,8 @@ def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
             session["end_min"],
             "open",
             _now(),
+            session["snapshot_id"],
+            session["template_version"],
         ),
     )
     conn.execute(
@@ -115,6 +123,8 @@ def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
         "ok": True,
         "lease_no": lease_no,
         "window_code": window_code,
+        "snapshot_id": session["snapshot_id"],
+        "template_version": session["template_version"],
         "status": "open",
         "open_leases": open_n,
     }
@@ -142,7 +152,3 @@ def close_lease(conn: sqlite3.Connection, lease_no: str) -> dict:
         "status": "closed",
         "open_leases": open_n,
     }
-
-
-def _template_bind(conn, window_code):
-    return expand_panel.resolve_for_open(conn, window_code)

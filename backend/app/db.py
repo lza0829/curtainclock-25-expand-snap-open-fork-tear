@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS windows (
   end_min INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft',
   template_code TEXT,
-  template_version INTEGER
+  template_version INTEGER,
+  snapshot_id TEXT
 );
 CREATE TABLE IF NOT EXISTS templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +75,9 @@ CREATE TABLE IF NOT EXISTS leases (
   end_min INTEGER NOT NULL,
   status TEXT NOT NULL,
   opened_at TEXT NOT NULL,
-  closed_at TEXT
+  closed_at TEXT,
+  snapshot_id TEXT,
+  template_version INTEGER
 );
 CREATE TABLE IF NOT EXISTS conflicts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,12 +126,31 @@ def transaction():
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """老库补列：windows 增加模板快照溯源字段（快照臂：值在展开时定格）。"""
+    """老库补列（快照臂：值在展开/开窗时定格，之后永不回写）。
+
+    * windows.snapshot_id —— 批窗已钉快照身份，开窗/预检只认它，手工窗为 NULL；
+    * leases.snapshot_id / leases.template_version —— 租约落点那一刻从批窗快照
+      行抄定，使租约页能与批窗绑定、总览徽章三方互证。
+    """
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(windows)")}
     if "template_code" not in cols:
         conn.execute("ALTER TABLE windows ADD COLUMN template_code TEXT")
     if "template_version" not in cols:
         conn.execute("ALTER TABLE windows ADD COLUMN template_version INTEGER")
+    if "snapshot_id" not in cols:
+        conn.execute("ALTER TABLE windows ADD COLUMN snapshot_id TEXT")
+
+    lease_cols = {r["name"] for r in conn.execute("PRAGMA table_info(leases)")}
+    if "snapshot_id" not in lease_cols:
+        conn.execute("ALTER TABLE leases ADD COLUMN snapshot_id TEXT")
+    if "template_version" not in lease_cols:
+        conn.execute("ALTER TABLE leases ADD COLUMN template_version INTEGER")
+
+    # 清掉跟随臂时代的涂漆标记：钉扎只认真表列，settings 里不再允许快照身份
+    conn.execute(
+        "DELETE FROM settings WHERE key LIKE 'window_snapshot:%' "
+        "OR key LIKE 'expand_paint:%'"
+    )
 
 
 def init_db() -> None:

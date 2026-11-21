@@ -1,9 +1,9 @@
 from __future__ import annotations
-from app.services import expand_panel
 
 from fastapi import APIRouter
 
 from app.db import connect
+from app.services.overview import build_overview
 
 router = APIRouter(tags=["dashboard"])
 
@@ -35,6 +35,6 @@ def dashboard():
             "live_sessions": live_n,
             "draft_sessions": draft_n,
         }
-        return expand_panel.overlay_dashboard(conn, base)
+        return build_overview(conn, base)
     finally:
         conn.close()

@@ -1,3 +1,9 @@
+"""开窗预检（快照臂）。
+
+唯一输入是批窗快照行（windows 行的 slot_code/executor_code/day/时段），
+本模块全程不查 templates/template_entries —— 活模板变更不得影响已钉批窗的
+预检结论，禁止开窗旁路读模板头。
+"""
 from __future__ import annotations
 
 import sqlite3

@@ -1,11 +1,13 @@
-from app.services import expand_panel
-"""周模板与展开（快照臂）。
+"""周模板与展开（快照臂，全局唯一架构，不混跟随臂）。
 
-口径：以展开时刻快照为准 ——
-  * 展开时把模板的算力槽/执行器/时段抄进各日批窗，并记 template_version；
-  * 之后改模板只 bump templates.version，绝不回写已展开草稿/已 live 批窗；
-  * 开窗预检与租约实资源只读批窗自身快照列（见 services/lease.py、ready.py，
-    它们不感知模板表），因此改模板与开窗并发也不存在"半截重绑"。
+口径：以展开时刻钉死的快照为唯一真源 ——
+  * 展开时把模板的算力槽/执行器/时段抄进各日批窗，并钉 snapshot_id、
+    记 template_version；
+  * 之后改模板只 bump templates.version、整组换条目，绝不回写已展开草稿，
+    更不得静默改已 live 占用（update_template 不触碰 windows/leases）；
+  * 开窗预检（services/ready.py）与租约实资源（services/lease.py）只读批窗
+    自身快照列，不感知模板表 —— 改模板与开窗并发也不存在"半截重绑"；
+  * 禁止开窗旁路读模板头，禁止任何路径静默改绑 windows.snapshot_id。
 """
 from __future__ import annotations
 
@@ -17,6 +19,11 @@ WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_snapshot_id(expansion_id: int) -> str:
+    """快照身份的唯一生成点：展开审计行 id 即快照世代，全局可核。"""
+    return f"SNAP-{expansion_id:08d}"
 
 
 def _entries_of(conn: sqlite3.Connection, template_id: int) -> list[sqlite3.Row]:
@@ -181,6 +188,7 @@ def expand_template(
             "ok": True,
             "reused": True,
             "expansion_id": exp["id"],
+            "snapshot_id": make_snapshot_id(exp["id"]),
             "template_code": template_code,
             "template_version": exp["template_version"],
             "week_start": week_start,
@@ -193,16 +201,17 @@ def expand_template(
         (template_code, tpl["version"], week_start, _now()),
     )
     expansion_id = cur.lastrowid
+    snapshot_id = make_snapshot_id(expansion_id)
     codes: list[str] = []
     for idx, e in enumerate(tpl["entries"], start=1):
         day = (start + timedelta(days=int(e["weekday"]))).isoformat()
-        # 快照：槽/执行器/时段在此刻从模板抄定，之后改模板不回写
+        # 快照：槽/执行器/时段 + snapshot_id 在此刻从模板抄定，之后改模板不回写
         code = f"W-{template_code}-{day.replace('-', '')}-{idx:02d}"
         title = f"{tpl['title']}·周{WEEKDAY_CN[int(e['weekday'])]}"
         conn.execute(
             "INSERT INTO windows(code, title, subject, slot_code, executor_code, "
-            "day, start_min, end_min, status, template_code, template_version) "
-            "VALUES(?,?,?,?,?,?,?,?, 'draft', ?, ?)",
+            "day, start_min, end_min, status, template_code, template_version, snapshot_id) "
+            "VALUES(?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)",
             (
                 code,
                 title,
@@ -214,6 +223,7 @@ def expand_template(
                 int(e["end_min"]),
                 template_code,
                 tpl["version"],
+                snapshot_id,
             ),
         )
         conn.execute(
@@ -225,6 +235,7 @@ def expand_template(
         "ok": True,
         "reused": False,
         "expansion_id": expansion_id,
+        "snapshot_id": snapshot_id,
         "template_code": template_code,
         "template_version": tpl["version"],
         "week_start": week_start,
@@ -240,40 +251,27 @@ def list_expansions(conn: sqlite3.Connection) -> list[dict]:
     for r in rows:
         items = conn.execute(
             "SELECT i.window_code, w.status, w.day, w.start_min, w.end_min, "
-            "w.slot_code, w.executor_code "
+            "w.slot_code, w.executor_code, w.snapshot_id, w.template_version "
             "FROM expansion_items i LEFT JOIN windows w ON w.code = i.window_code "
             "WHERE i.expansion_id=? ORDER BY i.id",
             (r["id"],),
         ).fetchall()
+        # 互证：该展开下每个存留批窗的钉扎必须同属本快照，不得双现行
+        pinned = {
+            i["snapshot_id"]
+            for i in items
+            if i["snapshot_id"] is not None and i["status"] is not None
+        }
         out.append(
             {
                 "id": r["id"],
+                "snapshot_id": make_snapshot_id(r["id"]),
                 "template_code": r["template_code"],
                 "template_version": r["template_version"],
                 "week_start": r["week_start"],
                 "created_at": r["created_at"],
+                "pinning_consistent": pinned <= {make_snapshot_id(r["id"])},
                 "items": [dict(i) for i in items],
             }
         )
     return out
-
-
-_orig_expand = None
-for _name in ("expand", "expand_template", "materialize"):
-    if _name in globals() and callable(globals()[_name]):
-        _orig_expand = globals()[_name]
-        break
-
-
-_expand_orig = expand
-
-
-def expand(conn, *args, **kwargs):
-    result = _expand_orig(conn, *args, **kwargs)
-    code = None
-    if isinstance(result, dict):
-        code = result.get("window_code") or result.get("code")
-        sid = result.get("snapshot_id") or "snap-painted"
-        if code:
-            expand_panel.paint_expand(conn, code, sid)
-    return result
